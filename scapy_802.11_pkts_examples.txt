@@ -1,0 +1,78 @@
+# All tested with rt5572 wireless N adapter
+
+# useful iw commands
+iw dev
+iw wlan1 info
+iw phy1 info
+iw dev wlan1 scan
+iw dev wlan0 set freq 5500 HT40+
+iw dev wlan0 set freq 5500 80MHz
+
+# wifi channel survey stats
+https://www.tablix.org/~avian/blog/archives/2016/02/ieee_802_11_channel_survey_statistics/
+https://gist.github.com/ffund/f3e679530fd304d43ea555d0973a88d9
+
+ethtool -S wlan0
+iw dev wlan0 survey dump
+
+# put wifi into monitor mode
+ifconfig wlan1 down
+iwconfig wlan1 mode monitor
+iwconfig wlan1 channel 149
+ifconfig wlan1 up
+iwconfig wlan1
+ 
+# check packet injection
+https://www.aircrack-ng.org/doku.php?id=injection_test
+aireplay-ng -9 wlan1
+aireplay-ng -9 -i wlan0 wlan1
+
+# wireshark 802.11 packet filter 
+https://www.semfionetworks.com/uploads/2/9/8/3/29831147/wireshark_802.11_filters_-_reference_sheet.pdf
+
+# scapy useful tips
+ls() ; to list all available layers
+ls(Dot11)
+lsc() ; to see all available commands
+dir(packet) ; to see all available methods in obj/cmd 
+frame.haslayer(Dot11Beacon) ; check if frame has Dot11Beacon layer
+frame.getlayer(Dot11Beacon) ; get Dot11Beacon layer
+sendp(frame, iface='wlan1' ; count=10, inter=0.1) ; send layer 2 pkt
+frames = rdpcap(filename) ; open pcap file
+
+# scapy examples to build 802.11 pkts and inject to air
+# addr1 = Destination Address, addr2 = Source Address, addr3 = BSSID
+from scapy.all import *
+my_addr = '11:22:33:44:55:66'
+dst_addr = 'ff:ff:ff:ff:ff:ff'
+interface = 'wlan1'
+
+beacon_pkt = RadioTap() / Dot11(addr1=dst_addr, addr2=my_addr, addr3=my_addr) \
+             / Dot11Beacon() / Dot11Elt(ID='SSID', info='My_SSID', len=len('My_SSID'))
+deauth_pkt = RadioTap() / Dot11(addr1=dst_addr, addr2=my_addr, addr3=my_addr) / Dot11Deauth() / Dot11Elt()
+probe_req_pkt = RadioTap() / Dot11(addr1=dst_addr, addr2=my_addr, addr3=my_addr) / Dot11ProbeReq() / Dot11Elt()
+
+sendp(beacon_pkt, inter=0.1, count=10, iface=interface)
+
+# scapy pkt replay from captured 802.11 pkts 
+frames = rdpcap('802.11_management_frames.pcap')
+frames[0].layers()
+frames[0].show()
+frames[0].getlayer(Dot11).addr2=my_addr
+frames[0].getlayer(Dot11).addr3=my_addr
+
+sendp(frames[0], inter=0.1, count=10, iface='wlan1')
+
+# scapy 802.11 pkt sniff
+access_points = []
+ssid = lambda packet: "<Hidden SSID>" if not packet.info else packet.info
+
+def packet_handler(packet):
+    if packet.haslayer(Dot11Beacon):
+        if packet.addr2 not in access_points:
+            access_points.append(packet.addr2)
+
+            print("BSSID: {}, SSID: {}, RSSI: {} dBm, Freq: {} MHz".format(\
+                packet.addr2, ssid(packet), packet.dBm_AntSignal, packet.ChannelFrequency))
+
+sniff(iface="wlan1", prn = packet_handler)
